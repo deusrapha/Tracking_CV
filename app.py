@@ -9,7 +9,8 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Add simulation/src to path for tracking imports
+# Add simulation and simulation/src to path for tracking imports
+sys.path.append(os.path.join(os.path.dirname(__file__), "simulation"))
 sys.path.append(os.path.join(os.path.dirname(__file__), "simulation", "src"))
 
 from models.baseline_tracker import BoundingBoxTracker, AppearanceExtractor
