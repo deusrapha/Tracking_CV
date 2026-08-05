@@ -296,6 +296,12 @@ class CounterfactualAmodalTracker:
             best_old_track = None
             
             for old_track in recoverable_candidates:
+                det_cx = det_box[0] + (det_box[2] - det_box[0]) / 2.0
+                det_cy = det_box[1] + (det_box[3] - det_box[1]) / 2.0
+                comp = old_track.occlusion.get("component_mask")
+                if comp is not None and not self.occlusion_handler.is_point_inside_component(det_cx, det_cy, comp, margin=30.0):
+                    continue
+
                 score = compute_identity_link_score(
                     old_track, det_box, det_feat,
                     det_col=det_col, det_ar=det_ar, det_tex=tex_new, det_struc=struc_new,

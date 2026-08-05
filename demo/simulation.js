@@ -743,6 +743,102 @@ class IdentityMemory {
 
 // --- Occlusion Geometry & Vegetation Constraint Helpers ---
 function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []) {
+    let startX = Math.floor(cx);
+    let startY = Math.floor(cy);
+
+    if (vegetationCanvas && vegetationCanvas.getContext) {
+        try {
+            let ctx = vegetationCanvas.getContext('2d');
+            let w = vegetationCanvas.width;
+            let h = vegetationCanvas.height;
+            let imgData = ctx.getImageData(0, 0, w, h);
+            let data = imgData.data;
+
+            startX = Math.max(0, Math.min(w - 1, startX));
+            startY = Math.max(0, Math.min(h - 1, startY));
+
+            let startIdx = (startY * w + startX) * 4;
+            let isStartVeg = (data[startIdx + 1] > 40 && data[startIdx + 3] > 0);
+
+            // If start pixel is not vegetation, search 35px neighborhood for nearest vegetation pixel
+            if (!isStartVeg) {
+                let found = false;
+                for (let r = 5; r <= 35; r += 5) {
+                    for (let angle = 0; angle < 2 * Math.PI; angle += Math.PI / 4) {
+                        let nx = Math.floor(startX + r * Math.cos(angle));
+                        let ny = Math.floor(startY + r * Math.sin(angle));
+                        if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                            let nIdx = (ny * w + nx) * 4;
+                            if (data[nIdx + 1] > 40 && data[nIdx + 3] > 0) {
+                                startX = nx;
+                                startY = ny;
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (found) break;
+                }
+            }
+
+            // 2D BFS flood-fill to extract true connected vegetation pixel component
+            let visited = new Uint8Array(w * h);
+            let queue = [ [startX, startY] ];
+            let minX = startX, maxX = startX, minY = startY, maxY = startY;
+            let sumX = 0, sumY = 0, count = 0;
+            let visitedIdx = startY * w + startX;
+            visited[visitedIdx] = 1;
+
+            while (queue.length > 0 && count < 8000) {
+                let [x, y] = queue.shift();
+                let pIdx = (y * w + x) * 4;
+                let isVeg = (data[pIdx + 1] > 40 && data[pIdx + 3] > 0);
+                if (!isVeg) continue;
+
+                count++;
+                sumX += x;
+                sumY += y;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+
+                let neighbors = [ [x+2, y], [x-2, y], [x, y+2], [x, y-2] ];
+                for (let [nx, ny] of neighbors) {
+                    if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                        let nIdx = ny * w + nx;
+                        if (!visited[nIdx]) {
+                            visited[nIdx] = 1;
+                            let dFromStart = Math.hypot(nx - startX, ny - startY);
+                            if (dFromStart <= 120) {
+                                queue.push([nx, ny]);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (count > 10) {
+                let compCx = sumX / count;
+                let compCy = sumY / count;
+                let approxRadius = Math.max(25, Math.max((maxX - minX) / 2, (maxY - minY) / 2));
+                return {
+                    cx: compCx,
+                    cy: compCy,
+                    r: approxRadius,
+                    exitRadius: approxRadius + 20, // 20px exit recovery band
+                    minX: minX, maxX: maxX, minY: minY, maxY: maxY,
+                    pixelCount: count,
+                    visited: visited,
+                    type: "CONNECTED_PIXEL_COMPONENT"
+                };
+            }
+        } catch (e) {
+            // Fall through to tree geometry model fallback
+        }
+    }
+
+    // Fallback: Tree canopy model geometry
     let closestTree = null;
     let minDist = Infinity;
     for (let tree of trees) {
@@ -758,8 +854,8 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
             cx: closestTree.cx,
             cy: closestTree.cy,
             r: closestTree.r,
-            exitRadius: closestTree.r + 20, // 20px exit recovery band around vegetation
-            type: "TREE_CANOPY"
+            exitRadius: closestTree.r + 20,
+            type: "TREE_CANOPY_GEOMETRY"
         };
     }
 
@@ -772,7 +868,7 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
     };
 }
 
-function pointInsideMask(componentMask, x, y, margin = 15) {
+function pointInsideMask(componentMask, x, y, margin = 0) {
     if (!componentMask) return true;
     let dist = Math.hypot(x - componentMask.cx, y - componentMask.cy);
     let maxAllowed = (componentMask.exitRadius || (componentMask.r + 20)) + margin;
@@ -1064,10 +1160,11 @@ class CounterfactualAmodalTracker {
 
             let isMatched = false;
             if (track.state === "OCCLUDED" || track.state === "REMERGING" || track.state === "SEARCH") {
-                if (iou > 0.15 || (sim > 0.65 && dist <= maxDev)) {
+                let insideRecoveryRegion = pointInsideMask(track.occlusion.componentMask, detCx, detCy, 0);
+                if (insideRecoveryRegion && (iou > 0.15 || (sim > 0.65 && dist <= maxDev))) {
                     isMatched = true;
                     track.state = "REMERGING";
-                    triggerLog("remerge", `Track ${track.trackId} re-emerged with similarity score ${sim.toFixed(2)} (IoU: ${iou.toFixed(2)}, dist: ${dist.toFixed(1)}px)`);
+                    triggerLog("remerge", `Track ${track.trackId} re-emerged within vegetation exit band (sim: ${sim.toFixed(2)}, IoU: ${iou.toFixed(2)}, dist: ${dist.toFixed(1)}px)`);
                     updateReIDPanel(track.trackId, track.identity.appearanceEmbedding, detHist, sim);
                 }
             } else {
