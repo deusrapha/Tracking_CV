@@ -651,12 +651,15 @@ with col_sidebar:
         name='UAV Current Pos'
     ))
     
+    # Merge PLOT_LAYOUT to prevent duplicate keyword arguments (xaxis, yaxis) in update_layout
+    map_layout = PLOT_LAYOUT.copy()
+    map_layout['xaxis'] = {**map_layout['xaxis'], 'range': [0, 1000], 'showgrid': True, 'gridcolor': 'rgba(255,255,255,0.04)' if IS_DARK else 'rgba(0,0,0,0.04)'}
+    map_layout['yaxis'] = {**map_layout['yaxis'], 'range': [0, 1000], 'showgrid': True, 'gridcolor': 'rgba(255,255,255,0.04)' if IS_DARK else 'rgba(0,0,0,0.04)'}
+    
     fig_map.update_layout(
-        xaxis=dict(range=[0, 1000], showgrid=True, gridcolor='rgba(255,255,255,0.04)' if IS_DARK else 'rgba(0,0,0,0.04)'),
-        yaxis=dict(range=[0, 1000], showgrid=True, gridcolor='rgba(255,255,255,0.04)' if IS_DARK else 'rgba(0,0,0,0.04)'),
         showlegend=False,
         height=190,
-        **PLOT_LAYOUT
+        **map_layout
     )
     st.plotly_chart(fig_map, use_container_width=True, config={"displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
