@@ -742,6 +742,7 @@ class IdentityMemory {
 }
 
 // --- Occlusion Geometry & Vegetation Constraint Helpers ---
+// --- Occlusion Geometry & Vegetation Constraint Helpers ---
 function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []) {
     let startX = Math.floor(cx);
     let startY = Math.floor(cy);
@@ -781,8 +782,9 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
                 }
             }
 
-            // 2D BFS flood-fill to extract true connected vegetation pixel component (O(N) queue with head pointer)
+            // 1-pixel 8-neighbor BFS flood-fill to extract CONFIRMED vegetation pixels
             let visited = new Uint8Array(w * h);
+            let componentPixels = new Uint8Array(w * h);
             let queue = [ [startX, startY] ];
             let head = 0;
             let minX = startX, maxX = startX, minY = startY, maxY = startY;
@@ -794,8 +796,10 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
                 let [x, y] = queue[head++];
                 let pIdx = (y * w + x) * 4;
                 let isVeg = (data[pIdx + 1] > 40 && data[pIdx + 3] > 0);
-                if (!isVeg) continue;
+                if (!isVeg) continue; // Skip non-vegetation pixels (do NOT add to componentPixels)
 
+                // CONFIRMED vegetation pixel
+                componentPixels[y * w + x] = 1;
                 count++;
                 sumX += x;
                 sumY += y;
@@ -804,14 +808,19 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
                 if (y < minY) minY = y;
                 if (y > maxY) maxY = y;
 
-                let neighbors = [ [x+2, y], [x-2, y], [x, y+2], [x, y-2] ];
+                // 8-neighbor connectivity
+                let neighbors = [
+                    [x-1, y-1], [x, y-1], [x+1, y-1],
+                    [x-1, y],             [x+1, y],
+                    [x-1, y+1], [x, y+1], [x+1, y+1]
+                ];
                 for (let [nx, ny] of neighbors) {
                     if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
                         let nIdx = ny * w + nx;
                         if (!visited[nIdx]) {
                             visited[nIdx] = 1;
                             let dFromStart = Math.hypot(nx - startX, ny - startY);
-                            if (dFromStart <= 120) {
+                            if (dFromStart <= 130) {
                                 queue.push([nx, ny]);
                             }
                         }
@@ -823,6 +832,34 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
                 let compCx = sumX / count;
                 let compCy = sumY / count;
                 let approxRadius = Math.max(25, Math.max((maxX - minX) / 2, (maxY - minY) / 2));
+
+                // Pre-compute 20px morphologically dilated exit band mask
+                let dilatedPixels = new Uint8Array(w * h);
+                let band = 20;
+                for (let y = Math.max(0, minY - band); y <= Math.min(h - 1, maxY + band); y++) {
+                    for (let x = Math.max(0, minX - band); x <= Math.min(w - 1, maxX + band); x++) {
+                        let foundNear = false;
+                        for (let dy = -band; dy <= band; dy += 4) {
+                            let py = y + dy;
+                            if (py < 0 || py >= h) continue;
+                            for (let dx = -band; dx <= band; dx += 4) {
+                                if (dx * dx + dy * dy > band * band) continue;
+                                let px = x + dx;
+                                if (px >= 0 && px < w) {
+                                    if (componentPixels[py * w + px] === 1) {
+                                        foundNear = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (foundNear) break;
+                        }
+                        if (foundNear) {
+                            dilatedPixels[y * w + x] = 1;
+                        }
+                    }
+                }
+
                 return {
                     cx: compCx,
                     cy: compCy,
@@ -832,7 +869,8 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
                     pixelCount: count,
                     width: w,
                     height: h,
-                    visited: visited,
+                    componentPixels: componentPixels,
+                    dilatedPixels: dilatedPixels,
                     type: "CONNECTED_PIXEL_COMPONENT"
                 };
             }
@@ -874,31 +912,29 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
 function pointInsideMask(componentMask, x, y, margin = 0) {
     if (!componentMask) return true;
 
-    // Exact pixel-level component membership with dilated exit band
-    if (componentMask.visited && componentMask.width && componentMask.height) {
+    // Exact pixel-level component membership testing
+    if (componentMask.componentPixels && componentMask.width && componentMask.height) {
         let ix = Math.round(x);
         let iy = Math.round(y);
         let w = componentMask.width;
         let h = componentMask.height;
-        let band = Math.round(margin > 0 ? margin : 20); // 20px dilated exit band
 
-        for (let dy = -band; dy <= band; dy += 4) {
-            for (let dx = -band; dx <= band; dx += 4) {
-                let px = ix + dx;
-                let py = iy + dy;
-                if (px >= 0 && px < w && py >= 0 && py < h) {
-                    if (componentMask.visited[py * w + px] === 1) {
-                        return true;
-                    }
-                }
+        if (margin <= 0) {
+            if (ix >= 0 && ix < w && iy >= 0 && iy < h) {
+                return componentMask.componentPixels[iy * w + ix] === 1;
             }
+            return false;
+        } else if (componentMask.dilatedPixels) {
+            if (ix >= 0 && ix < w && iy >= 0 && iy < h) {
+                return componentMask.dilatedPixels[iy * w + ix] === 1;
+            }
+            return false;
         }
-        return false;
     }
 
     // Spatial distance fallback for geometric model objects
     let dist = Math.hypot(x - componentMask.cx, y - componentMask.cy);
-    let maxAllowed = (componentMask.exitRadius || (componentMask.r + 20)) + margin;
+    let maxAllowed = (margin > 0) ? (componentMask.exitRadius + margin) : componentMask.r;
     return dist <= maxAllowed;
 }
 
@@ -2409,8 +2445,22 @@ class OcclusionSimulator {
                 if (this.showUncertainty && pred.sigma) {
                     ctx.save();
 
-                    // Intersect / clip uncertainty envelope with the connected occluding vegetation region + exit band
-                    if (pred.componentMask) {
+                    // Intersect / clip uncertainty envelope with the exact dilated component mask
+                    if (pred.componentMask && pred.componentMask.dilatedPixels) {
+                        let comp = pred.componentMask;
+                        let w = comp.width;
+                        let h = comp.height;
+                        let dilated = comp.dilatedPixels;
+                        ctx.beginPath();
+                        for (let y = Math.max(0, comp.minY - 20); y <= Math.min(h - 1, comp.maxY + 20); y += 4) {
+                            for (let x = Math.max(0, comp.minX - 20); x <= Math.min(w - 1, comp.maxX + 20); x += 4) {
+                                if (dilated[y * w + x] === 1) {
+                                    ctx.rect(x, y, 4, 4);
+                                }
+                            }
+                        }
+                        ctx.clip();
+                    } else if (pred.componentMask) {
                         let comp = pred.componentMask;
                         ctx.beginPath();
                         ctx.arc(comp.cx, comp.cy, comp.exitRadius || (comp.r + 20), 0, 2 * Math.PI);
