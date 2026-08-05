@@ -1,6 +1,5 @@
-streamlit==1.60.0
-starlette<1.4.0
-numpy<2.0
+streamlit==1.50.0
+numpy==1.26.4
 opencv-python-headless==4.10.0.84
 scipy==1.13.1
 onnxruntime==1.19.2
