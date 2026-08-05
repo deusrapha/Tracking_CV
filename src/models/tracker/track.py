@@ -237,22 +237,31 @@ class IdentityMemory:
 
 
 class CounterfactualAmodalTrack:
-    def __init__(self, bbox, track_id, frame=None, extractor=None, appearance_embedding=None, persistent_identity_id=None):
-        self.track_id = track_id
-        self.track_instance_id = track_id
-        self.persistent_identity_id = persistent_identity_id if persistent_identity_id is not None else track_id
+    def __init__(self, bbox, track_instance_id, cattle_id=None, frame=None, extractor=None, appearance_embedding=None, persistent_identity_id=None, origin_type="UNKNOWN"):
+        self.track_instance_id = track_instance_id
+        # cattle_id / persistent_identity_id
+        if cattle_id is not None:
+            self._cattle_id = cattle_id
+        elif persistent_identity_id is not None:
+            self._cattle_id = persistent_identity_id
+        else:
+            self._cattle_id = track_instance_id
+
+        self.predecessor_track_instance_id = None
+        self.successor_track_instance_id = None
+        self.origin_type = origin_type # "SCENE_ENTRY", "OCCLUSION_REEMERGENCE", "INITIAL_FRAME", "UNKNOWN"
         self.extractor = extractor
-        
+
         # Parse bbox [x1, y1, x2, y2]
         x1, y1, x2, y2 = bbox
         w = x2 - x1
         h = y2 - y1
         cx = x1 + w / 2.0
         cy = y1 + h / 2.0
-        
-        # 1. TrackState
-        self.state = "NEW"  # NEW, VISIBLE, OCCLUDED, REMERGING, LOST, SEARCH, EXPIRED
-        
+
+        # 1. TrackState: NEW, VISIBLE, OCCLUDED, REMERGING, LOST, SEARCH, TENTATIVE_REID, SUPERSEDED, EXPIRED
+        self.state = "NEW"
+
         # 2. MotionState
         self.motion = {
             "x": np.array([cx, cy, 0.0, 0.0, 0.0, w, h], dtype=np.float32).reshape(7, 1),
@@ -263,6 +272,7 @@ class CounterfactualAmodalTrack:
             "Sigma": np.array([[5.0, 0.0], [0.0, 5.0]], dtype=np.float32),
             "Q_sigma": np.array([[3.0, 0.0], [0.0, 3.0]], dtype=np.float32)
         }
+
         # Initialize motion cov components
         self.motion["P"][2, 2] = 5.0
         self.motion["P"][3, 3] = 1.0
@@ -321,6 +331,30 @@ class CounterfactualAmodalTrack:
         if color_hist is None:
             color_hist = emb
         self.identity_memory = IdentityMemory(emb, color_hist, w / h, 0.0, 0.0, 1.0, texture=texture, structural=structural)
+
+    @property
+    def cattle_id(self):
+        return self._cattle_id
+
+    @cattle_id.setter
+    def cattle_id(self, val):
+        self._cattle_id = val
+
+    @property
+    def persistent_identity_id(self):
+        return self._cattle_id
+
+    @persistent_identity_id.setter
+    def persistent_identity_id(self, val):
+        self._cattle_id = val
+
+    @property
+    def track_id(self):
+        return self.track_instance_id
+
+    @track_id.setter
+    def track_id(self, val):
+        self.track_instance_id = val
         
     def get_identity_prototype(self):
         avg_emb = self.identity_memory.appearance.average_embedding
