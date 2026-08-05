@@ -18,7 +18,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Beyond the Line of Sight 🛸")
+st.title("Beyond the Line of Sight")
 st.markdown("""
 **Counterfactual Amodal Anchors for Occlusion-Aware Multi-Animal Tracking in UAV-Based Precision Livestock Monitoring**
 

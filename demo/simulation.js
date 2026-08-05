@@ -120,16 +120,20 @@ class GroundPlaneProjector {
 
 /// --- 3. Unified Counterfactual Amodal Track (CAT) ---
 class CounterfactualAmodalTrack {
-    constructor(bbox, trackId, appearanceHist) {
-        this.trackId = trackId;
-        
+    constructor(bbox, trackInstanceId, appearanceHist, cattleId = null, originType = "UNKNOWN") {
+        this.trackInstanceId = trackInstanceId;
+        this.cattleId = cattleId !== null ? cattleId : trackInstanceId;
+        this.predecessorTrackInstanceId = null;
+        this.successorTrackInstanceId = null;
+        this.originType = originType;
+
         let cx = bbox[0] + (bbox[2] - bbox[0]) / 2.0;
         let cy = bbox[1] + (bbox[3] - bbox[1]) / 2.0;
         let w = bbox[2] - bbox[0];
         let h = bbox[3] - bbox[1];
 
-        // 1. TrackState
-        this.state = "NEW"; // "NEW", "VISIBLE", "OCCLUDED", "REMERGING", "LOST", "SEARCH", "EXPIRED"
+        // 1. TrackState: "NEW", "VISIBLE", "OCCLUDED", "REMERGING", "LOST", "SEARCH", "TENTATIVE_REID", "SUPERSEDED", "EXPIRED"
+        this.state = "NEW";
 
         // 2. MotionState (7-state EKF CTRV model)
         this.motion = {
@@ -196,6 +200,14 @@ class CounterfactualAmodalTrack {
         this.lastUpdatedCx = cx;
         this.lastUpdatedCy = cy;
         this.identityMemory = new IdentityMemory(appearanceHist, appearanceHist, w / h, 0.0, 0.0, 1.0);
+    }
+
+    get trackId() {
+        return this.trackInstanceId;
+    }
+
+    get persistentIdentityId() {
+        return this.cattleId;
     }
 
     predict(dt = 1.0, herdMeanVelocity = null, cohesionWeight = 0.5) {
@@ -717,9 +729,18 @@ class CounterfactualAmodalTracker {
     constructor(projector) {
         this.projector = projector;
         this.tracks = [];
-        this.nextId = 1;
+        this.nextTrackInstanceId = 1;
+        this.nextCattleId = 1;
+        this.cattleIdentities = {};
         this.frameCount = 0;
         this.prevCamOffset = { x: 0, y: 0 };
+    }
+
+    get nextId() {
+        return this.nextTrackInstanceId;
+    }
+    set nextId(val) {
+        this.nextTrackInstanceId = val;
     }
 
     // Camera Motion Compensation
@@ -738,8 +759,10 @@ class CounterfactualAmodalTracker {
     get amodalAnchors() {
         let anchors = {};
         for (let track of this.tracks) {
-            if (track.state === "OCCLUDED" || track.state === "REMERGING") {
-                anchors[track.trackId] = {
+            if (track.state === "OCCLUDED" || track.state === "SEARCH" || track.state === "REMERGING" || track.state === "LOST") {
+                anchors[track.trackInstanceId] = {
+                    trackInstanceId: track.trackInstanceId,
+                    cattleId: track.cattleId,
                     cx: track.motion.cx,
                     cy: track.motion.cy,
                     w: track.motion.w,
@@ -2038,7 +2061,11 @@ class OcclusionSimulator {
                 // Track Label
                 ctx.fillStyle = varColor("--accent-visible");
                 ctx.font = "bold 11px Outfit";
-                ctx.fillText(`CATTLE ID: ${pred.trackId}`, x1, y1 - 4);
+                let labelText = `CATTLE ID ${pred.cattleId || pred.trackId}`;
+                if (pred.trackInstanceId && pred.trackInstanceId !== pred.cattleId) {
+                    labelText += ` (Track ${pred.trackInstanceId})`;
+                }
+                ctx.fillText(labelText, x1, y1 - 4);
             } else if (pred.status === "occluded_virtual") {
                 // Amodal Anchor predicted bounding box (Orange dotted)
                 ctx.strokeStyle = varColor("--accent-occluded");
@@ -2049,24 +2076,28 @@ class OcclusionSimulator {
                 
                 ctx.fillStyle = varColor("--accent-occluded");
                 ctx.font = "bold 11px Outfit";
-                ctx.fillText(`AMODAL ID: ${pred.trackId} [OCCLUDED]`, x1, y1 - 4);
+                let amodalText = `AMODAL CATTLE ID ${pred.cattleId || pred.trackId} [SEARCH]`;
+                if (pred.trackInstanceId && pred.trackInstanceId !== pred.cattleId) {
+                    amodalText += ` (Track ${pred.trackInstanceId})`;
+                }
+                ctx.fillText(amodalText, x1, y1 - 4);
 
-                // Draw growing uncertainty ellipse Sigma
+                // Draw growing uncertainty ellipse Sigma (3-sigma confidence envelope)
                 if (this.showUncertainty && pred.sigma) {
                     ctx.save();
                     ctx.translate(x1 + w/2, y1 + h/2);
                     
-                    // Sigma covariance mapping search bounds (2x2 components)
-                    // sxx, sxy, syx, syy. Standard deviation = sqrt(sxx)
-                    let stdX = Math.sqrt(pred.sigma[0]);
-                    let stdY = Math.sqrt(pred.sigma[3]);
+                    let s0 = pred.sigma[0] || pred.sigma[0][0] || 5.0;
+                    let s3 = pred.sigma[3] || pred.sigma[1][1] || 5.0;
+                    let major = pred.major_axis || (3.0 * Math.sqrt(Math.max(1.0, s0)));
+                    let minor = pred.minor_axis || (3.0 * Math.sqrt(Math.max(1.0, s3)));
+                    let angleRad = (pred.angle || 0) * Math.PI / 180.0;
                     
-                    // Draw uncertainty search area
-                    ctx.strokeStyle = "rgba(255, 167, 38, 0.4)";
-                    ctx.lineWidth = 1;
-                    ctx.fillStyle = "rgba(255, 167, 38, 0.05)";
+                    ctx.strokeStyle = "rgba(255, 167, 38, 0.5)";
+                    ctx.lineWidth = 1.5;
+                    ctx.fillStyle = "rgba(255, 167, 38, 0.08)";
                     ctx.beginPath();
-                    ctx.ellipse(0, 0, stdX * 5.5, stdY * 5.5, 0, 0, 2 * Math.PI); // Scale up variance factor for display
+                    ctx.ellipse(0, 0, major * 2.0, minor * 2.0, angleRad, 0, 2 * Math.PI);
                     ctx.fill();
                     ctx.stroke();
                     ctx.restore();
