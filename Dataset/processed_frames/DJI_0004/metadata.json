@@ -1,0 +1,87 @@
+{
+    "video_name": "DJI_0004.MP4",
+    "width": 1920,
+    "height": 1080,
+    "native_fps": 25.0,
+    "target_fps": 5.0,
+    "total_original_frames": 92,
+    "extracted_frames": 19,
+    "frame_mapping": {
+        "1": {
+            "original_frame_index": 0,
+            "timestamp_ms": 40.0
+        },
+        "2": {
+            "original_frame_index": 5,
+            "timestamp_ms": 200.0
+        },
+        "3": {
+            "original_frame_index": 10,
+            "timestamp_ms": 400.0
+        },
+        "4": {
+            "original_frame_index": 15,
+            "timestamp_ms": 600.0000000000001
+        },
+        "5": {
+            "original_frame_index": 20,
+            "timestamp_ms": 800.0
+        },
+        "6": {
+            "original_frame_index": 25,
+            "timestamp_ms": 1000.0
+        },
+        "7": {
+            "original_frame_index": 30,
+            "timestamp_ms": 1200.0000000000002
+        },
+        "8": {
+            "original_frame_index": 35,
+            "timestamp_ms": 1400.0000000000002
+        },
+        "9": {
+            "original_frame_index": 40,
+            "timestamp_ms": 1600.0
+        },
+        "10": {
+            "original_frame_index": 45,
+            "timestamp_ms": 1800.0
+        },
+        "11": {
+            "original_frame_index": 50,
+            "timestamp_ms": 2000.0
+        },
+        "12": {
+            "original_frame_index": 55,
+            "timestamp_ms": 2200.0
+        },
+        "13": {
+            "original_frame_index": 60,
+            "timestamp_ms": 2400.0000000000005
+        },
+        "14": {
+            "original_frame_index": 65,
+            "timestamp_ms": 2600.0
+        },
+        "15": {
+            "original_frame_index": 70,
+            "timestamp_ms": 2800.0000000000005
+        },
+        "16": {
+            "original_frame_index": 75,
+            "timestamp_ms": 3000.0000000000005
+        },
+        "17": {
+            "original_frame_index": 80,
+            "timestamp_ms": 3200.0
+        },
+        "18": {
+            "original_frame_index": 85,
+            "timestamp_ms": 3400.0000000000005
+        },
+        "19": {
+            "original_frame_index": 90,
+            "timestamp_ms": 3600.0
+        }
+    }
+}

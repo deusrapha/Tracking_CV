@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Datasets & Zip Files
+Dataset/*.zip
+Dataset/extracted/
+Dataset/processed_frames_backup/
+
+# Exclude all processed frames except the DJI_0004 calibration sequence used by the simulation
+Dataset/processed_frames/*
+!Dataset/processed_frames/DJI_0004/
+
+# Logs & Temporary Files
+*.log
+.gemini/
+scratch/

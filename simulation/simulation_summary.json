@@ -1,0 +1,49 @@
+{
+    "e2e_latencies": [
+        108.3120000002964,
+        510.76909999937925,
+        214.4118999985949,
+        209.92850000038743,
+        211.46570000018983,
+        219.18510000068636,
+        211.66439999979048,
+        226.33660000064992,
+        218.48229999886826,
+        206.43100000052073,
+        201.87979999900563,
+        201.85839999976452,
+        202.58770000145887,
+        194.20050000007905,
+        215.59660000093572,
+        204.8504000013054,
+        205.48149999922316,
+        213.61030000116443,
+        217.75309999975434
+    ],
+    "p50_latency": 211.46570000018983,
+    "p95_latency": 254.77985000052226,
+    "mean_breakdowns": {
+        "load": 22.5430210522111,
+        "segment": 29.621373684437316,
+        "cmc": 75.58746842091512,
+        "tracking": 92.98785789475292,
+        "watchdog": 0.03487894719000906
+    },
+    "watchdog_logs": [
+        {
+            "timestamp": 1785922533.263295,
+            "event": "SIGNAL_LOSS",
+            "details": "[WATCHDOG FAULT] Link or GPS signal lost! (GPS: 0.0, Link: 1.0). Triggering RTL (Return To Land)."
+        },
+        {
+            "timestamp": 1785922534.138983,
+            "event": "GEOFENCE_BREACH",
+            "details": "[WATCHDOG FAULT] Geofence breached at pos: [950.0, 950.0]! Triggering immediate abort."
+        },
+        {
+            "timestamp": 1785922534.9517338,
+            "event": "LOW_CONFIDENCE",
+            "details": "[WATCHDOG WARNING] Tracking confidence critically low (0.15)! Requesting manual operator takeover."
+        }
+    ]
+}

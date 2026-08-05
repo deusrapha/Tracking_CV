@@ -1,0 +1,13 @@
+{
+    "total_ground_truth_boxes": 38,
+    "false_negatives": 38,
+    "false_positives": 0,
+    "identity_switches": 0,
+    "mota": 2.6315788659303507e-08,
+    "visible_stratified_recall": 0.0,
+    "occluded_stratified_recall": 0.0,
+    "occlusion_events_recorded": 2,
+    "successful_recoveries": 0,
+    "failed_recoveries": 0,
+    "recovery_success_rate": 0.0
+}

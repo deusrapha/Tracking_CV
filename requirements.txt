@@ -1,0 +1,9 @@
+numpy
+opencv-python
+scipy
+onnxruntime
+torch
+torchvision
+pillow
+requests
+pypdf
