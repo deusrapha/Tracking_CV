@@ -257,9 +257,27 @@ class CounterfactualAmodalTrack {
                 blendedVy = (1.0 - cohesionWeight) * selfVy + cohesionWeight * herdMeanVelocity[1];
             }
 
-            // Propagate amodal center
-            this.motion.cx += blendedVx * dt;
-            this.motion.cy += blendedVy * dt;
+            // Unconstrained CTRV prediction candidate
+            let predictedX = this.motion.cx + blendedVx * dt;
+            let predictedY = this.motion.cy + blendedVy * dt;
+
+            // Vegetation-Constrained Amodal Occupancy:
+            // Prevent anchor from drifting into open visible ground without detection
+            let margin = (this.state === "SEARCH" || this.state === "LOST") ? 25 : 10;
+            if (this.occlusion.componentMask && pointInsideMask(this.occlusion.componentMask, predictedX, predictedY, margin)) {
+                this.motion.cx = predictedX;
+                this.motion.cy = predictedY;
+                this.occlusion.lastValidOccludedPoint = { x: predictedX, y: predictedY };
+            } else if (this.occlusion.componentMask) {
+                let constrained = projectToNearestValidOccludedPoint(this.occlusion.componentMask, predictedX, predictedY, margin);
+                this.motion.cx = constrained.x;
+                this.motion.cy = constrained.y;
+                // Counterfactual observation penalty: open ground contains no detection, push probability back into canopy
+                this.counterfactualConfidence = Math.max(0.1, this.counterfactualConfidence * 0.90);
+            } else {
+                this.motion.cx = predictedX;
+                this.motion.cy = predictedY;
+            }
 
             // Grow spatial amodal uncertainty Sigma
             this.motion.Sigma[0] += this.motion.Q_sigma[0] * qScale * dt;
@@ -723,6 +741,54 @@ class IdentityMemory {
     }
 }
 
+// --- Occlusion Geometry & Vegetation Constraint Helpers ---
+function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []) {
+    let closestTree = null;
+    let minDist = Infinity;
+    for (let tree of trees) {
+        let dist = Math.hypot(cx - tree.cx, cy - tree.cy);
+        if (dist < minDist) {
+            minDist = dist;
+            closestTree = tree;
+        }
+    }
+
+    if (closestTree && minDist <= closestTree.r + 65) {
+        return {
+            cx: closestTree.cx,
+            cy: closestTree.cy,
+            r: closestTree.r,
+            exitRadius: closestTree.r + 20, // 20px exit recovery band around vegetation
+            type: "TREE_CANOPY"
+        };
+    }
+
+    return {
+        cx: cx,
+        cy: cy,
+        r: 65,
+        exitRadius: 85,
+        type: "CANOPY_REGION"
+    };
+}
+
+function pointInsideMask(componentMask, x, y, margin = 15) {
+    if (!componentMask) return true;
+    let dist = Math.hypot(x - componentMask.cx, y - componentMask.cy);
+    let maxAllowed = (componentMask.exitRadius || (componentMask.r + 20)) + margin;
+    return dist <= maxAllowed;
+}
+
+function projectToNearestValidOccludedPoint(componentMask, x, y, margin = 0) {
+    if (!componentMask) return { x, y };
+    let maxAllowed = (componentMask.exitRadius || (componentMask.r + 20)) + margin;
+    let angle = Math.atan2(y - componentMask.cy, x - componentMask.cx);
+    return {
+        x: componentMask.cx + maxAllowed * Math.cos(angle),
+        y: componentMask.cy + maxAllowed * Math.sin(angle)
+    };
+}
+
 // --- 4. Counterfactual Amodal Tracker (CAT) ---
 
 class CounterfactualAmodalTracker {
@@ -1083,8 +1149,11 @@ class CounterfactualAmodalTracker {
                 if (isOccluded) {
                     track.state = "OCCLUDED";
                     track.occlusion.entryFrame = this.frameCount;
+                    track.occlusion.entryPoint = { x: track.motion.cx, y: track.motion.cy };
+                    track.occlusion.lastValidOccludedPoint = { x: track.motion.cx, y: track.motion.cy };
+                    track.occlusion.componentMask = extractConnectedOcclusionComponent(vegetationMaskCanvas, track.motion.cx, track.motion.cy, this.trees);
                     track.identityMemory.reliability.successfulRecoveries = 0; // reset
-                    triggerLog("seed", `Track ${track.trackId} entered occlusion. Seeding virtual anchor.`);
+                    triggerLog("seed", `Track ${track.trackId} entered occlusion. Saved connected canopy component mask.`);
                 } else {
                     track.state = "LOST";
                     triggerLog("sys", `[CAT] Track ${track.trackId} lost observation. Transition: LOST`);
@@ -1333,6 +1402,7 @@ class CounterfactualAmodalTracker {
                     bbox: bbox,
                     status: "occluded_virtual",
                     sigma: track.motion.Sigma,
+                    componentMask: track.occlusion.componentMask,
                     framesOccluded: track.occlusion.framesOccluded,
                     velocity: [track.motion.v * Math.cos(track.motion.theta), track.motion.v * Math.sin(track.motion.theta)]
                 });
@@ -2211,9 +2281,18 @@ class OcclusionSimulator {
                 }
                 ctx.fillText(amodalText, x1, y1 - 4);
 
-                // Draw growing uncertainty ellipse Sigma (3-sigma confidence envelope)
+                // Draw growing uncertainty ellipse Sigma (3-sigma confidence envelope clipped to vegetation canopy)
                 if (this.showUncertainty && pred.sigma) {
                     ctx.save();
+
+                    // Intersect / clip uncertainty envelope with the connected occluding vegetation region + exit band
+                    if (pred.componentMask) {
+                        let comp = pred.componentMask;
+                        ctx.beginPath();
+                        ctx.arc(comp.cx, comp.cy, comp.exitRadius || (comp.r + 20), 0, 2 * Math.PI);
+                        ctx.clip();
+                    }
+
                     ctx.translate(x1 + w/2, y1 + h/2);
                     
                     let s0 = pred.sigma[0] || pred.sigma[0][0] || 5.0;
@@ -2222,9 +2301,9 @@ class OcclusionSimulator {
                     let minor = pred.minor_axis || (3.0 * Math.sqrt(Math.max(1.0, s3)));
                     let angleRad = (pred.angle || 0) * Math.PI / 180.0;
                     
-                    ctx.strokeStyle = "rgba(255, 167, 38, 0.5)";
+                    ctx.strokeStyle = "rgba(255, 167, 38, 0.65)";
                     ctx.lineWidth = 1.5;
-                    ctx.fillStyle = "rgba(255, 167, 38, 0.08)";
+                    ctx.fillStyle = "rgba(255, 167, 38, 0.14)";
                     ctx.beginPath();
                     ctx.ellipse(0, 0, major * 2.0, minor * 2.0, angleRad, 0, 2 * Math.PI);
                     ctx.fill();
