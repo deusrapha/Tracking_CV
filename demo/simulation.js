@@ -781,16 +781,17 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
                 }
             }
 
-            // 2D BFS flood-fill to extract true connected vegetation pixel component
+            // 2D BFS flood-fill to extract true connected vegetation pixel component (O(N) queue with head pointer)
             let visited = new Uint8Array(w * h);
             let queue = [ [startX, startY] ];
+            let head = 0;
             let minX = startX, maxX = startX, minY = startY, maxY = startY;
             let sumX = 0, sumY = 0, count = 0;
             let visitedIdx = startY * w + startX;
             visited[visitedIdx] = 1;
 
-            while (queue.length > 0 && count < 8000) {
-                let [x, y] = queue.shift();
+            while (head < queue.length && count < 8000) {
+                let [x, y] = queue[head++];
                 let pIdx = (y * w + x) * 4;
                 let isVeg = (data[pIdx + 1] > 40 && data[pIdx + 3] > 0);
                 if (!isVeg) continue;
@@ -829,6 +830,8 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
                     exitRadius: approxRadius + 20, // 20px exit recovery band
                     minX: minX, maxX: maxX, minY: minY, maxY: maxY,
                     pixelCount: count,
+                    width: w,
+                    height: h,
                     visited: visited,
                     type: "CONNECTED_PIXEL_COMPONENT"
                 };
@@ -870,6 +873,30 @@ function extractConnectedOcclusionComponent(vegetationCanvas, cx, cy, trees = []
 
 function pointInsideMask(componentMask, x, y, margin = 0) {
     if (!componentMask) return true;
+
+    // Exact pixel-level component membership with dilated exit band
+    if (componentMask.visited && componentMask.width && componentMask.height) {
+        let ix = Math.round(x);
+        let iy = Math.round(y);
+        let w = componentMask.width;
+        let h = componentMask.height;
+        let band = Math.round(margin > 0 ? margin : 20); // 20px dilated exit band
+
+        for (let dy = -band; dy <= band; dy += 4) {
+            for (let dx = -band; dx <= band; dx += 4) {
+                let px = ix + dx;
+                let py = iy + dy;
+                if (px >= 0 && px < w && py >= 0 && py < h) {
+                    if (componentMask.visited[py * w + px] === 1) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    // Spatial distance fallback for geometric model objects
     let dist = Math.hypot(x - componentMask.cx, y - componentMask.cy);
     let maxAllowed = (componentMask.exitRadius || (componentMask.r + 20)) + margin;
     return dist <= maxAllowed;

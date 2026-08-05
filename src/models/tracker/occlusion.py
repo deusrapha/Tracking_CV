@@ -94,6 +94,28 @@ class CanopyOcclusionHandler:
     def is_point_inside_component(self, cx, cy, comp_data, margin=20.0):
         if comp_data is None:
             return True
+            
+        scale_x = comp_data.get("scale_x", 1.0)
+        scale_y = comp_data.get("scale_y", 1.0)
+        mx = int(round(cx * scale_x))
+        my = int(round(cy * scale_y))
+        
+        mask = comp_data.get("mask")
+        if mask is not None:
+            h, w = mask.shape[:2]
+            if not (0 <= mx < w and 0 <= my < h):
+                return False
+                
+            if margin <= 0:
+                return bool(mask[my, mx])
+                
+            import cv2
+            kernel_size = max(1, int(round(margin * max(scale_x, scale_y))))
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * kernel_size + 1, 2 * kernel_size + 1))
+            dilated_mask = cv2.dilate(mask.astype(np.uint8), kernel)
+            return bool(dilated_mask[my, mx])
+
+        # Bounding box fallback
         return (comp_data["min_x"] - margin) <= cx <= (comp_data["max_x"] + margin) and \
                (comp_data["min_y"] - margin) <= cy <= (comp_data["max_y"] + margin)
 
