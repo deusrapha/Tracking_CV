@@ -1111,7 +1111,7 @@ class CounterfactualAmodalTracker {
             }
         }
 
-        // 5. Spawn new tracks for unmatched detections
+        // 5. Pre-allocation recovery testing for unmatched detections
         let unmatchedDetections = [];
         let matchedDetections = [];
         for (let j = 0; j < detections.length; j++) {
@@ -1123,13 +1123,112 @@ class CounterfactualAmodalTracker {
         }
         triggerLog("sys", `[DIAGNOSTIC] Detections count: ${detections.length}. Matched detections: [${matchedDetections.join(', ')}], Unmatched detections: [${unmatchedDetections.join(', ')}]`);
 
+        const AMODAL_STATES = new Set(["OCCLUDED", "SEARCH", "REMERGING", "LOST"]);
+
+        let activeIds = Array.from(new Set(this.tracks.filter(t => t.state === "VISIBLE" || t.state === "NEW").map(t => t.cattleId || t.trackId)));
+        let searchIds = Array.from(new Set(this.tracks.filter(t => AMODAL_STATES.has(t.state)).map(t => t.cattleId || t.trackId)));
+        let inactiveIds = Object.keys(this.cattleIdentities).filter(id => this.cattleIdentities[id].state === "INACTIVE_SEARCH");
+        
+        triggerLog("sys", `[IDENTITY REGISTRY] Active=[${activeIds.join(', ')}], Searching=[${searchIds.join(', ')}], Inactive=[${inactiveIds.join(', ')}]`);
+
         for (let j = 0; j < detections.length; j++) {
             if (!matchedDets.has(j)) {
-                let newTrack = new CounterfactualAmodalTrack(detections[j], this.nextId++, detHistograms[j]);
-                newTrack.state = "VISIBLE";
-                newTrack.identity.lastMatchedFrame = this.frameCount;
-                this.tracks.push(newTrack);
-                triggerLog("sys", `[CAT] Spawned new Track ID ${newTrack.trackId} from unmatched detection.`);
+                let detBox = detections[j];
+                let detHist = detHistograms[j];
+                let detCx = detBox[0] + (detBox[2] - detBox[0]) / 2.0;
+                let detCy = detBox[1] + (detBox[3] - detBox[1]) / 2.0;
+
+                // Gather persistent identity candidates: active amodal tracks + inactive registry entries
+                let persistentCandidates = [];
+                for (let track of this.tracks) {
+                    if (AMODAL_STATES.has(track.state)) {
+                        persistentCandidates.push({
+                            cattleId: track.cattleId || track.trackId,
+                            trackInstanceId: track.trackInstanceId || track.trackId,
+                            embedding: track.identityMemory?.appearance?.averageEmbedding || track.identity.appearanceEmbedding,
+                            cx: track.motion.cx,
+                            cy: track.motion.cy,
+                            sigma: track.motion.Sigma,
+                            source: "ACTIVE_TRACK"
+                        });
+                    }
+                }
+                for (let cid in this.cattleIdentities) {
+                    let rec = this.cattleIdentities[cid];
+                    if (rec.state === "INACTIVE_SEARCH") {
+                        if (!persistentCandidates.some(c => c.cattleId === parseInt(cid))) {
+                            persistentCandidates.push({
+                                cattleId: parseInt(cid),
+                                trackInstanceId: rec.lastTrackInstanceId || parseInt(cid),
+                                embedding: rec.appearanceEmbedding,
+                                cx: rec.lastPosition ? rec.lastPosition[0] : detCx,
+                                cy: rec.lastPosition ? rec.lastPosition[1] : detCy,
+                                sigma: [900, 0, 0, 900],
+                                source: "INACTIVE_REGISTRY"
+                            });
+                        }
+                    }
+                }
+
+                triggerLog("sys", `[NEW ID GUARD] Detection ${j} tested against ${persistentCandidates.length} persistent identities`);
+
+                let bestCandidate = null;
+                let bestScore = -1.0;
+                let rejectionReasons = [];
+
+                for (let cand of persistentCandidates) {
+                    let sim = compareHistograms(cand.embedding, detHist);
+                    let dist = Math.hypot(detCx - cand.cx, detCy - cand.cy);
+                    let stdX = Math.sqrt(cand.sigma[0] || 900);
+                    let stdY = Math.sqrt(cand.sigma[3] || 900);
+                    let maxDev = 3.5 * Math.max(stdX, stdY, 100);
+
+                    if (sim >= 0.50 || dist <= maxDev) {
+                        let score = 0.6 * sim + 0.4 * Math.max(0, 1.0 - dist / maxDev);
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestCandidate = cand;
+                        }
+                    } else {
+                        rejectionReasons.push(`CattleID ${cand.cattleId} (sim=${sim.toFixed(2)}, dist=${dist.toFixed(1)}px > maxDev=${maxDev.toFixed(1)}px)`);
+                    }
+                }
+
+                if (bestCandidate && bestScore >= 0.45) {
+                    let recoveredTrack = new CounterfactualAmodalTrack(detBox, this.nextTrackInstanceId++, detHist);
+                    recoveredTrack.cattleId = bestCandidate.cattleId;
+                    recoveredTrack.originType = "OCCLUSION_RECOVERY";
+                    recoveredTrack.state = "VISIBLE";
+                    recoveredTrack.identity.lastMatchedFrame = this.frameCount;
+                    this.tracks.push(recoveredTrack);
+
+                    this.cattleIdentities[bestCandidate.cattleId] = {
+                        cattleId: bestCandidate.cattleId,
+                        state: "ACTIVE",
+                        lastTrackInstanceId: recoveredTrack.trackInstanceId,
+                        appearanceEmbedding: detHist,
+                        lastSeenFrame: this.frameCount
+                    };
+                    triggerLog("sys", `[RECOVERY CONFIRMED] Created Track instance ${recoveredTrack.trackInstanceId}, Inherited Cattle ID ${recoveredTrack.cattleId}`);
+                } else {
+                    let newCattleId = this.nextCattleId++;
+                    let newTrack = new CounterfactualAmodalTrack(detBox, this.nextTrackInstanceId++, detHist);
+                    newTrack.cattleId = newCattleId;
+                    newTrack.originType = "SCENE_ENTRY";
+                    newTrack.state = "VISIBLE";
+                    newTrack.identity.lastMatchedFrame = this.frameCount;
+                    this.tracks.push(newTrack);
+
+                    this.cattleIdentities[newCattleId] = {
+                        cattleId: newCattleId,
+                        state: "ACTIVE",
+                        lastTrackInstanceId: newTrack.trackInstanceId,
+                        appearanceEmbedding: detHist,
+                        lastSeenFrame: this.frameCount
+                    };
+
+                    triggerLog("sys", `[NEW CATTLE ID] Allocated Cattle ID ${newCattleId}. Rejected persistent candidates: ${rejectionReasons.join('; ') || 'none'}`);
+                }
             }
         }
 
@@ -1150,8 +1249,6 @@ class CounterfactualAmodalTracker {
                         let older = t1.trackId < t2.trackId ? t1 : t2;
                         let newer = t1.trackId < t2.trackId ? t2 : t1;
                         
-                        // If the newer track is visible and the older track is occluded/lost,
-                        // the older track inherits the state and position to prevent identity switches.
                         if ((newer.state === "VISIBLE" || newer.state === "NEW") && 
                             older.state !== "VISIBLE" && older.state !== "NEW") {
                             older.state = newer.state;
@@ -1178,29 +1275,46 @@ class CounterfactualAmodalTracker {
         }
         this.tracks = this.tracks.filter(t => !toSuppress.has(t.trackId));
 
-        // 7. Cleanup EXPIRED tracks
+        // 7. Preservation of persistent cattle identities upon EXPIRED tracks cleanup
+        for (let track of this.tracks) {
+            if (track.state === "EXPIRED" && track.cattleId) {
+                this.cattleIdentities[track.cattleId] = {
+                    cattleId: track.cattleId,
+                    state: "INACTIVE_SEARCH",
+                    lastTrackInstanceId: track.trackInstanceId,
+                    lastPosition: [track.motion.cx, track.motion.cy],
+                    appearanceEmbedding: track.identityMemory?.appearance?.averageEmbedding || track.identity.appearanceEmbedding,
+                    lastSeenFrame: this.frameCount
+                };
+                triggerLog("sys", `[IDENTITY REGISTRY] Transitioned Cattle ID ${track.cattleId} to INACTIVE_SEARCH upon track instance expiration.`);
+            }
+        }
         this.tracks = this.tracks.filter(t => t.state !== "EXPIRED");
 
         for (let track of this.tracks) {
             let tsu = (track.state === "VISIBLE" || track.state === "NEW") ? 0 : (this.frameCount - track.identity.lastMatchedFrame);
-            triggerLog("sys", `[DIAGNOSTIC] Post-Cleanup: ID ${track.trackId} | state=${track.state} | tsu=${tsu}`);
+            triggerLog("sys", `[DIAGNOSTIC] Post-Cleanup: ID ${track.trackId} (Cattle ID ${track.cattleId}) | state=${track.state} | tsu=${tsu}`);
         }
         triggerLog("sys", `[DIAGNOSTIC] === END FRAME ${this.frameCount} ===`);
 
-        // 8. Compile outputs list
+        // 8. Compile outputs list with consistent AMODAL_STATES
         let output = [];
         for (let track of this.tracks) {
             let bbox = track.stateToBbox();
             if (track.state === "VISIBLE" || track.state === "NEW") {
                 output.push({
-                    trackId: track.trackId,
+                    trackId: track.cattleId || track.trackId,
+                    trackInstanceId: track.trackInstanceId || track.trackId,
+                    cattleId: track.cattleId || track.trackId,
                     bbox: bbox,
                     status: "visible",
                     velocity: [track.motion.v * Math.cos(track.motion.theta), track.motion.v * Math.sin(track.motion.theta)]
                 });
-            } else if (track.state === "OCCLUDED" || track.state === "REMERGING") {
+            } else if (AMODAL_STATES.has(track.state)) {
                 output.push({
-                    trackId: track.trackId,
+                    trackId: track.cattleId || track.trackId,
+                    trackInstanceId: track.trackInstanceId || track.trackId,
+                    cattleId: track.cattleId || track.trackId,
                     bbox: bbox,
                     status: "occluded_virtual",
                     sigma: track.motion.Sigma,
@@ -1210,12 +1324,12 @@ class CounterfactualAmodalTracker {
             }
         }
         
-        // Log status for debugging
-        triggerLog("sys", `[BASELINE UPDATE] Detections entering baseline: ${detections.length}. activeAnchorIds: [${Array.from(new Set(this.tracks.filter(t => t.state === "OCCLUDED" || t.state === "REMERGING").map(t => t.trackId))).join(', ')}]`);
-        triggerLog("sys", `[BASELINE UPDATE] Active visible tracks returned: ${output.filter(t => t.status === "visible").map(t => t.trackId).join(', ')}`);
+        let activeAnchorIds = Array.from(new Set(this.tracks.filter(t => AMODAL_STATES.has(t.state)).map(t => t.cattleId || t.trackId)));
+        triggerLog("sys", `[BASELINE UPDATE] Detections entering baseline: ${detections.length}. activeAnchorIds: [${activeAnchorIds.join(', ')}]`);
+        triggerLog("sys", `[BASELINE UPDATE] Active visible tracks returned: ${output.filter(t => t.status === "visible").map(t => t.cattleId || t.trackId).join(', ')}`);
         for (let track of this.tracks) {
             let timeSinceUpdate = (track.state === "VISIBLE" || track.state === "NEW") ? 0 : (this.frameCount - track.identity.lastMatchedFrame);
-            triggerLog("sys", `[TRACK STATUS] ID ${track.trackId}: state=${track.state}, timeSinceUpdate=${timeSinceUpdate}`);
+            triggerLog("sys", `[TRACK STATUS] ID ${track.cattleId || track.trackId} (TrackInst ${track.trackInstanceId || track.trackId}): state=${track.state}, timeSinceUpdate=${timeSinceUpdate}`);
         }
 
         return output;
