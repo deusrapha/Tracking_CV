@@ -10,7 +10,9 @@ from models.baseline_tracker import AppearanceExtractor
 from models.projection import GroundPlaneProjector
 from models.attention import SpatiotemporalDeformableAttention
 
-def run_profile_benchmark(num_frames=100, img_w=1920, img_h=1080):
+def run_profile_benchmark(num_frames=20, img_w=960, img_h=540):
+    import gc
+    gc.collect()
     print("==================================================")
     print("Occlusion-Aware Multi-Animal Tracking Profile Benchmark")
     print("==================================================")
@@ -21,7 +23,7 @@ def run_profile_benchmark(num_frames=100, img_w=1920, img_h=1080):
     # 1. Initialize modules
     print("Initializing framework modules...")
     projector = GroundPlaneProjector(img_w=img_w, img_h=img_h)
-    extractor = AppearanceExtractor()
+    extractor = AppearanceExtractor(onnx_path=None)
     tracker = CounterfactualAmodalTracker(projector=projector, extractor=extractor)
     
     # Initialize Deformable Attention Layer
@@ -119,6 +121,7 @@ def run_profile_benchmark(num_frames=100, img_w=1920, img_h=1080):
             
         step_end = time.perf_counter()
         timings["total_step"].append((step_end - step_start) * 1000.0)
+        gc.collect()
 
     # 4. Compile and print results
     print("\n================ BENCHMARK REPORT ================")

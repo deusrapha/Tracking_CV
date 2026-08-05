@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beyond the Line of Sight - Occlusion Tracking Demo</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-logo">
+                <div class="logo-icon"></div>
+                <div class="logo-text">
+                    <h1>Beyond the Line of Sight</h1>
+                    <p>Amodal UAV Cattle Tracking & Occlusion Compensation Dashboard</p>
+                </div>
+            </div>
+            <div class="header-badge">
+                <span class="pulse-indicator"></span> HIL Simulation Active
+            </div>
+        </header>
+
+        <!-- Main Workspace Grid -->
+        <main class="app-workspace">
+            
+            <!-- Left Workspace: Viewport and controls -->
+            <section class="workspace-left">
+                <!-- Aerial UAV Viewport Card -->
+                <div class="card viewport-card">
+                    <div class="card-header">
+                        <div class="card-title-group">
+                            <span class="card-icon uav-icon"></span>
+                            <h2>UAV Aerial Viewport (Camera Space)</h2>
+                        </div>
+                        <div class="viewport-stats">
+                            <span id="vp-resolution">1920x1080 (Scaled)</span>
+                            <span class="divider">|</span>
+                            <span id="vp-fps">FPS: 30.00</span>
+                        </div>
+                    </div>
+                    <div class="canvas-container">
+                        <canvas id="uav-canvas" width="1024" height="576"></canvas>
+                        <!-- Detection HUD overlay details -->
+                        <div id="hud-overlay" class="hud-overlay">
+                            <div class="hud-item"><span class="label">ALT:</span> <span id="hud-alt" class="val">30.0m</span></div>
+                            <div class="hud-item"><span class="label">PITCH:</span> <span id="hud-pitch" class="val">-90.0°</span></div>
+                            <div class="hud-item"><span class="label">ROLL:</span> <span id="hud-roll" class="val">0.0°</span></div>
+                        </div>
+                    </div>
+                    <!-- Viewport Simulation Controls Bar -->
+                    <div class="viewport-controls">
+                        <div class="control-group">
+                            <button id="btn-play-pause" class="btn btn-primary btn-icon-play" title="Play/Pause">Play</button>
+                            <button id="btn-step" class="btn btn-secondary btn-icon-step" title="Step Frame">Step</button>
+                            <button id="btn-reset" class="btn btn-danger btn-icon-reset" title="Reset Simulation">Reset</button>
+                        </div>
+                        <div class="slider-group speed-slider-group">
+                            <label for="slider-speed">Speed:</label>
+                            <input type="range" id="slider-speed" min="0.1" max="3" step="0.1" value="1.0">
+                            <span id="speed-val">1.0x</span>
+                        </div>
+                        <div class="toggle-group flex-wrap">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="chk-ground-truth" checked>
+                                <span class="slider"></span>
+                                <span class="toggle-label">Ground Truth</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="chk-uncertainty" checked>
+                                <span class="slider"></span>
+                                <span class="toggle-label">Uncertainty (Σ)</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="chk-paths" checked>
+                                <span class="slider"></span>
+                                <span class="toggle-label">Path History</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="chk-exg-mask">
+                                <span class="slider"></span>
+                                <span class="toggle-label">ExG Seg Mask</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lower Left: Event logs feed -->
+                <div class="card logs-card">
+                    <div class="card-header">
+                        <div class="card-title-group">
+                            <span class="card-icon log-icon"></span>
+                            <h2>Telemetry & Tracker System Event Log</h2>
+                        </div>
+                        <button id="btn-clear-logs" class="btn btn-text">Clear</button>
+                    </div>
+                    <div id="log-feed" class="log-feed">
+                        <!-- Log messages will be dynamically injected here -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Workspace: Sidebars for settings & projection -->
+            <section class="workspace-right">
+                
+                <!-- 1. Scenario Selector Card -->
+                <div class="card scenario-card">
+                    <div class="card-header">
+                        <div class="card-title-group">
+                            <span class="card-icon scenario-icon"></span>
+                            <h2>Simulation Scenario</h2>
+                        </div>
+                    </div>
+                    <div class="scenario-grid">
+                        <button class="btn btn-scenario active" data-scenario="linear">
+                            <strong>Linear Crossing</strong>
+                            <span>Straight crossing with ReID comparison</span>
+                        </button>
+                        <button class="btn btn-scenario" data-scenario="curved">
+                            <strong>Curved CTRV path</strong>
+                            <span>Shows turn rate (ω) prediction</span>
+                        </button>
+                        <button class="btn btn-scenario" data-scenario="herd">
+                            <strong>Herd Cohesion (Priors)</strong>
+                            <span>Velocity blending guides anchor</span>
+                        </button>
+                        <button class="btn btn-scenario" data-scenario="resting">
+                            <strong>Stationary Grazing</strong>
+                            <span>Adaptive timeout (x2 frames)</span>
+                        </button>
+                        <button class="btn btn-scenario" data-scenario="complete_herd">
+                            <strong>Complete Herd Occlusion</strong>
+                            <span>5-cow stress test under massive canopy</span>
+                        </button>
+                        <button class="btn btn-scenario" data-scenario="sandbox">
+                            <strong>Interactive Sandbox</strong>
+                            <span>Draw path / place trees & test</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 2. Parameters Card -->
+                <div class="card params-card">
+                    <div class="card-header">
+                        <div class="card-title-group">
+                            <span class="card-icon settings-icon"></span>
+                            <h2>Tracker & UAV Parameters</h2>
+                        </div>
+                    </div>
+                    <div class="params-container">
+                        <div class="param-row">
+                            <div class="param-info">
+                                <span class="param-label">UAV Altitude</span>
+                                <span id="val-altitude" class="param-value">30m</span>
+                            </div>
+                            <input type="range" id="param-altitude" min="10" max="60" step="1" value="30">
+                        </div>
+                        <div class="param-row">
+                            <div class="param-info">
+                                <span class="param-label">Camera Pitch (deg)</span>
+                                <span id="val-pitch" class="param-value">-90°</span>
+                            </div>
+                            <input type="range" id="param-pitch" min="-90" max="-45" step="1" value="-90">
+                        </div>
+                        <div class="param-row">
+                            <div class="param-info">
+                                <span class="param-label">Herd Cohesion weight (&beta;)</span>
+                                <span id="val-cohesion" class="param-value">0.50</span>
+                            </div>
+                            <input type="range" id="param-cohesion" min="0.0" max="1.0" step="0.05" value="0.50">
+                        </div>
+                        <div class="param-row">
+                            <div class="param-info">
+                                <span class="param-label">Max Occlusion Frames</span>
+                                <span id="val-timeout" class="param-value">150 f</span>
+                            </div>
+                            <input type="range" id="param-timeout" min="30" max="300" step="10" value="150">
+                        </div>
+                        <div class="param-row">
+                            <div class="param-info">
+                                <span class="param-label">Detector Noise (pixels)</span>
+                                <span id="val-noise" class="param-value">1.5px</span>
+                            </div>
+                            <input type="range" id="param-noise" min="0.0" max="10.0" step="0.5" value="1.5">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Metrics Card (MOT Evaluation Dashboard) -->
+                <div class="card metrics-card">
+                    <div class="card-header">
+                        <div class="card-title-group">
+                            <span class="card-icon metrics-icon"></span>
+                            <h2>Live MOT Metrics Dashboard</h2>
+                        </div>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metric-box">
+                            <span class="metric-num" id="metric-mota">100.0%</span>
+                            <span class="metric-label">MOTA Accuracy</span>
+                        </div>
+                        <div class="metric-box">
+                            <span class="metric-num" id="metric-idsw">0</span>
+                            <span class="metric-label">ID Switches</span>
+                        </div>
+                        <div class="metric-box">
+                            <span class="metric-num" id="metric-visible-recall">100.0%</span>
+                            <span class="metric-label">Visible Recall</span>
+                        </div>
+                        <div class="metric-box">
+                            <span class="metric-num" id="metric-occluded-recall">100.0%</span>
+                            <span class="metric-label">Occluded Recall</span>
+                        </div>
+                        <div class="metric-box wide">
+                            <span class="metric-num" id="metric-recovery-rate">100.0%</span>
+                            <span class="metric-label">Occlusion Recovery Rate <span id="metric-recovery-count">(0/0)</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Top-Down Ground Plane Projection view -->
+                <div class="card projection-card">
+                    <div class="card-header">
+                        <div class="card-title-group">
+                            <span class="card-icon projection-icon"></span>
+                            <h2>Ground Plane Projection & Amodal Occupancy</h2>
+                        </div>
+                    </div>
+                    <div class="projection-canvas-container">
+                        <canvas id="projection-canvas" width="300" height="200"></canvas>
+                        <div class="grid-legend">
+                            <div class="legend-item"><span class="dot g-tree"></span> Canopy</div>
+                            <div class="legend-item"><span class="dot g-pdf"></span> Gaussian PDF</div>
+                            <div class="legend-item"><span class="dot g-uav"></span> Projection (z=0)</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. Active Track Info / Appearance ReID profile card -->
+                <div class="card reid-card">
+                    <div class="card-header">
+                        <div class="card-title-group">
+                            <span class="card-icon reid-icon"></span>
+                            <h2>Track Re-ID Appearance Profile</h2>
+                        </div>
+                    </div>
+                    <div class="reid-container">
+                        <div class="track-profile-summary">
+                            <div class="profile-avatar" id="reid-avatar">?</div>
+                            <div class="profile-details">
+                                <h3 id="reid-track-id">Track Profile: None</h3>
+                                <p id="reid-track-status">Status: No active selection</p>
+                                <p id="reid-track-kinematics">Velocity: - | Uncertainty: -</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Appearance histogram comparison -->
+                        <div class="reid-comparison">
+                            <div class="histogram-labels">
+                                <span>Target Profile (Anchor)</span>
+                                <span>Candidate Match</span>
+                            </div>
+                            <div class="histogram-view">
+                                <canvas id="canvas-hist-anchor" width="120" height="40"></canvas>
+                                <canvas id="canvas-hist-candidate" width="120" height="40"></canvas>
+                            </div>
+                            <div class="similarity-match-gauge">
+                                <div class="gauge-label">ReID Match Similarity: <span id="reid-sim-val">--</span></div>
+                                <div class="gauge-bar-outer">
+                                    <div id="reid-sim-bar" class="gauge-bar-inner" style="width: 0%;"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+        </main>
+    </div>
+
+    <!-- Script files -->
+    <script src="simulation.js?v=2"></script>
+</body>
+</html>

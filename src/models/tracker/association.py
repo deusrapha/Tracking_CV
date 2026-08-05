@@ -19,10 +19,9 @@ def check_track_gate(track, det_box, det_feat, det_col=None, det_ar=None, det_te
     # Calculate thresholds matching
     iou = calculate_iou(track.last_bbox, det_box)
     
-    # Retrieve prototypes and calculate unified similarity
     avg_emb, avg_col = track.get_identity_prototype()
     if det_col is None:
-        det_col = det_feat
+        det_col = np.zeros(64, dtype=np.float32)
     if det_ar is None:
         det_w = det_box[2] - det_box[0]
         det_h = det_box[3] - det_box[1]
@@ -339,6 +338,17 @@ def associate_tracks(tracks, detections, det_features, mean_herd_vel=None, frame
     """
     if len(tracks) == 0 or len(detections) == 0:
         return [], list(range(len(tracks))), list(range(len(detections)))
+    # Pre-extract texture, structural, and color features for each detection
+    det_textures = []
+    det_structurals = []
+    det_colors = []
+    from .track import extract_texture_and_structural, extract_color_histogram
+    for det_box in detections:
+        tex, struc = extract_texture_and_structural(frame, det_box)
+        col = extract_color_histogram(frame, det_box)
+        det_textures.append(tex)
+        det_structurals.append(struc)
+        det_colors.append(col)
         
     cost_matrix, candidate_diags = build_cost_matrix(tracks, detections, det_features, mean_herd_vel, config, frame_count, frame)
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
@@ -375,7 +385,9 @@ def associate_tracks(tracks, detections, det_features, mean_herd_vel=None, frame
         assigned_det_to_tracks[j] = []
         for i, track in enumerate(tracks):
             det_feat = det_features[j]
-            is_matched, _, _, _, _, _, _, _, _, _ = check_track_gate(track, det_box, det_feat)
+            is_matched, _, _, _, _, _, _, _, _, _ = check_track_gate(
+                track, det_box, det_feat, det_col=det_colors[j], det_ar=None, det_tex=det_textures[j], det_struc=det_structurals[j]
+            )
             cost = cost_matrix[i, j]
             assigned_det_to_tracks[j].append((i, cost, is_matched, track.track_id))
 
@@ -391,7 +403,9 @@ def associate_tracks(tracks, detections, det_features, mean_herd_vel=None, frame
             print("\nCandidate evaluation")
             for track in tracks:
                 det_feat = det_features[j]
-                overall_gate_pass, motion_gate_pass, appearance_gate_pass, dist_gate_pass, mahalanobis_dist_sq, T_gate, dist_euclidean, eigvals, reason_fail, s_effective = check_track_gate(track, det_box, det_feat)
+                overall_gate_pass, motion_gate_pass, appearance_gate_pass, dist_gate_pass, mahalanobis_dist_sq, T_gate, dist_euclidean, eigvals, reason_fail, s_effective = check_track_gate(
+                    track, det_box, det_feat, det_col=det_colors[j], det_ar=None, det_tex=det_textures[j], det_struc=det_structurals[j]
+                )
                 
                 print(f"\nTrack {track.track_id}")
                 print(f"Predicted Position    : ({track.motion['x'][0, 0]:.1f}, {track.motion['x'][1, 0]:.1f})")

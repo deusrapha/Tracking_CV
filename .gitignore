@@ -1,9 +1,12 @@
-# Python
+# Python caches
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Environments
 .venv/
 venv/
+ENV/
 env/
 
 # Datasets & Zip Files
@@ -14,8 +17,16 @@ Dataset/processed_frames_backup/
 # Exclude all processed frames except the DJI_0004 calibration sequence used by the simulation
 Dataset/processed_frames/*
 !Dataset/processed_frames/DJI_0004/
+*.tar.gz
 
-# Logs & Temporary Files
+# Logs and outputs
 *.log
+*.json
+!demo/style.css
+!requirements.txt
 .gemini/
 scratch/
+
+# OS metadata
+.DS_Store
+Thumbs.db

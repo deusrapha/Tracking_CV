@@ -102,7 +102,7 @@ class AppearanceExtractor:
                 print(f"AppearanceExtractor: Failed to load TensorRT engine: {e}")
                 
         # 2. Attempt ONNX Runtime initialization (if TRT failed or not available)
-        if self.mode == "hsv" and HAS_ONNXRUNTIME and os.path.exists(onnx_path):
+        if self.mode == "hsv" and HAS_ONNXRUNTIME and onnx_path is not None and os.path.exists(onnx_path):
             try:
                 providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
                 self.ort_session = ort.InferenceSession(onnx_path, providers=providers)
@@ -112,7 +112,7 @@ class AppearanceExtractor:
                 print(f"AppearanceExtractor: Failed to load ONNX model: {e}")
                 
         # 3. Attempt PyTorch initialization (if TRT and ONNX failed)
-        if self.mode == "hsv" and HAS_PYTORCH:
+        if self.mode == "hsv" and HAS_PYTORCH and onnx_path is not None:
             try:
                 torch.manual_seed(42)
                 self.pytorch_model = MobileNetReID(device='cpu')
@@ -135,7 +135,7 @@ class AppearanceExtractor:
         crop = cv2.resize(crop, (128, 128))
         crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
         crop_norm = crop.astype(np.float32) / 255.0
-        crop_norm = (crop_norm - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
+        crop_norm = (crop_norm - np.array([0.485, 0.456, 0.406], dtype=np.float32)) / np.array([0.229, 0.224, 0.225], dtype=np.float32)
         crop_norm = crop_norm.transpose(2, 0, 1) # HWC to CHW
         return crop_norm
 
