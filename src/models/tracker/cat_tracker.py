@@ -365,10 +365,14 @@ class CounterfactualAmodalTracker:
                     recoverable_candidates.remove(best_old_track)
                     continue
 
-            # If no recovery link confirmed or deferred, spawn new Cattle ID
             assigned_cattle_id = self.next_cattle_id
             self.next_cattle_id += 1
+            active_cattle = [cid for cid, rec in self.cattle_identities.items() if rec.get("state") == "ACTIVE"]
+            searching_cattle = [cid for cid, rec in self.cattle_identities.items() if rec.get("state") in ["SEARCHING", "SEARCH"]]
+            inactive_cattle = [cid for cid, rec in self.cattle_identities.items() if rec.get("state") in ["INACTIVE_SEARCH", "INACTIVE"] and cid not in active_cattle]
+            historical_tracks = list({t.track_instance_id for t in self.tracks if t.state in ["SUPERSEDED", "EXPIRED"]})
             if verbose:
+                print(f"[IDENTITY REGISTRY] ActiveCattle={active_cattle}, SearchingCattle={searching_cattle}, InactiveCattle={inactive_cattle}, HistoricalTracks={historical_tracks}")
                 print(f"[TRACK BIRTH] Allocating new Cattle ID {assigned_cattle_id} (TrackInst {self.next_track_instance_id}) for detection {j} (origin={origin_type})")
             
             new_track = CounterfactualAmodalTrack(

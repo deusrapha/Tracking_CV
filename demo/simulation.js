@@ -1125,11 +1125,26 @@ class CounterfactualAmodalTracker {
 
         const AMODAL_STATES = new Set(["OCCLUDED", "SEARCH", "REMERGING", "LOST"]);
 
-        let activeIds = Array.from(new Set(this.tracks.filter(t => t.state === "VISIBLE" || t.state === "NEW").map(t => t.cattleId || t.trackId)));
-        let searchIds = Array.from(new Set(this.tracks.filter(t => AMODAL_STATES.has(t.state)).map(t => t.cattleId || t.trackId)));
-        let inactiveIds = Object.keys(this.cattleIdentities).filter(id => this.cattleIdentities[id].state === "INACTIVE_SEARCH");
+        let activeCattle = [];
+        let searchingCattle = [];
+        let inactiveCattle = [];
+        let historicalTracks = Array.from(new Set(this.tracks.filter(t => t.state === "SUPERSEDED" || t.state === "EXPIRED").map(t => t.trackInstanceId || t.trackId)));
+
+        for (let cid in this.cattleIdentities) {
+            let rec = this.cattleIdentities[cid];
+            let numCid = parseInt(cid);
+            if (rec.state === "ACTIVE") {
+                activeCattle.push(numCid);
+            } else if (rec.state === "SEARCHING" || rec.state === "SEARCH") {
+                searchingCattle.push(numCid);
+            } else if (rec.state === "INACTIVE_SEARCH" || rec.state === "INACTIVE") {
+                if (!activeCattle.includes(numCid)) {
+                    inactiveCattle.push(numCid);
+                }
+            }
+        }
         
-        triggerLog("sys", `[IDENTITY REGISTRY] Active=[${activeIds.join(', ')}], Searching=[${searchIds.join(', ')}], Inactive=[${inactiveIds.join(', ')}]`);
+        triggerLog("sys", `[IDENTITY REGISTRY] ActiveCattle=[${activeCattle.join(', ')}], SearchingCattle=[${searchingCattle.join(', ')}], InactiveCattle=[${inactiveCattle.join(', ')}], HistoricalTracks=[${historicalTracks.join(', ')}]`);
 
         for (let j = 0; j < detections.length; j++) {
             if (!matchedDets.has(j)) {
