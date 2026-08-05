@@ -70,7 +70,10 @@ def check_track_gate(track, det_box, det_feat, det_col=None, det_ar=None, det_te
     
     reason_fail = []
     
-    if track.state in ["OCCLUDED", "REMERGING", "SEARCH", "TENTATIVE_REID"]:
+    if track.state == "SUPERSEDED":
+        return False, False, False, False, 1e5, 25.0, 1e5, np.array([1e5, 1e5]), ["SUPERSEDED track"], 0.0
+
+    if track.state in ["OCCLUDED", "REMERGING", "SEARCH", "TENTATIVE_REID", "LOST"]:
         motion_gate_pass = iou > 0.0
         appearance_gate_pass = sim > 0.30
         dist_gate_pass = (dist_euclidean < 300.0 or mahalanobis_dist_sq <= max(T_gate * 2.0, 25.0))
@@ -91,6 +94,59 @@ def check_track_gate(track, det_box, det_feat, det_col=None, det_ar=None, det_te
             reason_fail.append(f"Visible gating thresholds exceeded (iou={iou:.2f}, sim={sim:.2f}, dist={dist_euclidean:.1f})")
             
     return overall_gate_pass, motion_gate_pass, appearance_gate_pass, dist_gate_pass, mahalanobis_dist_sq, T_gate, dist_euclidean, eigvals, reason_fail, s_effective
+
+def compute_identity_link_score(old_track, det_box, det_feat, det_col=None, det_ar=None, det_tex=None, det_struc=None, mean_herd_vel=None, frame_count=None):
+    """
+    Computes a higher-is-better identity link score in [0, 1] to assess if a detection/track
+    belongs to an occluded/search persistent cattle identity.
+    """
+    if old_track.state == "SUPERSEDED" or old_track.state == "EXPIRED":
+        return 0.0
+
+    # 1. Appearance similarity (0 to 1)
+    sim_app = old_track.identity_memory.appearance.compute_similarity(
+        det_feat, det_col, det_ar, det_tex, det_struc
+    )
+    
+    # 2. Temporal similarity (decay with tsu)
+    tsu = (frame_count - old_track.identity["last_matched_frame"]) if frame_count is not None else 1.0
+    temporal_sim = float(np.exp(-max(0.0, tsu - 1.0) / 100.0))
+    
+    # 3. Entry/exit & spatial proximity feasibility
+    det_cx = det_box[0] + (det_box[2] - det_box[0]) / 2.0
+    det_cy = det_box[1] + (det_box[3] - det_box[1]) / 2.0
+    dx = det_cx - old_track.motion["x"][0, 0]
+    dy = det_cy - old_track.motion["x"][1, 0]
+    dist = np.hypot(dx, dy)
+    
+    std_x = np.sqrt(max(1.0, float(old_track.motion["Sigma"][0, 0])))
+    std_y = np.sqrt(max(1.0, float(old_track.motion["Sigma"][1, 1])))
+    max_dev = 3.0 * max(std_x, std_y)
+    spatial_sim = max(0.0, 1.0 - dist / max(150.0, max_dev))
+    
+    # 4. Trajectory speed compatibility
+    elapsed = max(1.0, float(tsu))
+    est_speed = dist / elapsed
+    avg_speed = max(0.1, old_track.identity_memory.motion.average_speed)
+    speed_diff = abs(est_speed - avg_speed)
+    traj_sim = max(0.0, 1.0 - speed_diff / (avg_speed + 2.0))
+    
+    # 5. Context / Social similarity
+    context_sim = 0.5
+    if mean_herd_vel is not None:
+        exp_cx = old_track.motion["x"][0, 0] + mean_herd_vel[0]
+        exp_cy = old_track.motion["x"][1, 0] + mean_herd_vel[1]
+        dist_herd = np.hypot(det_cx - exp_cx, det_cy - exp_cy)
+        context_sim = max(0.0, 1.0 - dist_herd / 150.0)
+        
+    score = (
+        0.45 * sim_app
+        + 0.20 * temporal_sim
+        + 0.15 * spatial_sim
+        + 0.10 * traj_sim
+        + 0.10 * context_sim
+    )
+    return float(np.clip(score, 0.0, 1.0))
 
 def build_cost_matrix(tracks, detections, det_features, mean_herd_vel=None, config=None, frame_count=None, frame=None):
     """
